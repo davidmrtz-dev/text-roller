@@ -19,7 +19,7 @@
 // Define the number of devices we have in the chain and the hardware interface
 // NOTE: These pin numbers will probably not work with your hardware and may
 // need to be adapted
-#define HARDWARE_TYPE MD_MAX72XX::GENERIC_HW
+#define HARDWARE_TYPE MD_MAX72XX::FC16_HW
 #define MAX_DEVICES 11
 
 #define CLK_PIN   13  // or SCK
@@ -42,7 +42,7 @@ MD_MAX72XX mx = MD_MAX72XX(HARDWARE_TYPE, CS_PIN, MAX_DEVICES);
 
 // Global message buffers shared by Serial and Scrolling functions
 #define BUF_SIZE  75
-uint8_t curMessage[BUF_SIZE] = { "Hello!  " };
+uint8_t curMessage[BUF_SIZE] = { "Dj Davo Martinez " };
 uint8_t newMessage[BUF_SIZE];
 bool newMessageAvailable = false;
 
