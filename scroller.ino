@@ -1,206 +1,296 @@
-// Use the MD_MAX72XX library to scroll text on the display
-//
-// Demonstrates the use of the callback function to control what
-// is scrolled on the display text.
-//
-// User can enter text on the serial monitor and this will display as a
-// scrolling message on the display.
-// Speed for the display is controlled by a pot on SPEED_IN analog in.
-//
 #include <MD_MAX72xx.h>
-#include <SPI.h>
 
-#define IMMEDIATE_NEW   0     // if 1 will immediately display a new message
-#define USE_POT_CONTROL 1
-#define PRINT_CALLBACK  0
-
-#define PRINT(s, v) { Serial.print(F(s)); Serial.print(v); }
-
-// Define the number of devices we have in the chain and the hardware interface
-// NOTE: These pin numbers will probably not work with your hardware and may
-// need to be adapted
 #define HARDWARE_TYPE MD_MAX72XX::FC16_HW
-#define MAX_DEVICES 11
-
+#define MAX_DEVICES	4
 #define CLK_PIN   13  // or SCK
 #define DATA_PIN  11  // or MOSI
 #define CS_PIN    10  // or SS
+#define DELAYTIME  75 
 
-// SPI hardware interface
+String str = "";
+String selector = "";
+String customText = "";
+int djTextTrigger = 0;
+long randNumber;
 MD_MAX72XX mx = MD_MAX72XX(HARDWARE_TYPE, CS_PIN, MAX_DEVICES);
-// Arbitrary pins
-//MD_MAX72XX mx = MD_MAX72XX(HARDWARE_TYPE, DATA_PIN, CLK_PIN, CS_PIN, MAX_DEVICES);
 
-// Scrolling parameters
-#if USE_POT_CONTROL
-#define SPEED_IN  A5
-#else
-#define SCROLL_DELAY  75  // in milliseconds
-#endif // USE_POT_CONTROL
+void scrollText(const char *p) {
+  uint8_t charWidth;
+  uint8_t cBuf[8];  // this should be ok for all built-in fonts
 
-#define CHAR_SPACING  1 // pixels between characters
+  mx.clear();
 
-// Global message buffers shared by Serial and Scrolling functions
-#define BUF_SIZE  75
-uint8_t curMessage[BUF_SIZE] = { "Dj Davo Martinez " };
-uint8_t newMessage[BUF_SIZE];
-bool newMessageAvailable = false;
-
-uint16_t  scrollDelay;  // in milliseconds
-
-void readSerial(void)
-{
-  static uint8_t  putIndex = 0;
-
-  while (Serial.available())
+  while (*p != '\0')
   {
-    newMessage[putIndex] = (char)Serial.read();
-    if ((newMessage[putIndex] == '\n') || (putIndex >= BUF_SIZE-3)) // end of message character or full buffer
+    charWidth = mx.getChar(*p++, sizeof(cBuf) / sizeof(cBuf[0]), cBuf);
+
+    for (uint8_t i=0; i<=charWidth; i++)	// allow space between characters
     {
-      // put in a message separator and end the string
-      newMessage[putIndex++] = ' ';
-      newMessage[putIndex] = '\0';
-      // restart the index for next filling spree and flag we have a message waiting
-      putIndex = 0;
-      newMessageAvailable = true;
+      mx.transform(MD_MAX72XX::TSL);
+      if (i < charWidth)
+        mx.setColumn(0, cBuf[i]);
+      delay(DELAYTIME);
     }
-    else if (newMessage[putIndex] != '\r')
-      // Just save the next char in next location
-      putIndex++;
   }
 }
 
-void scrollDataSink(uint8_t dev, MD_MAX72XX::transformType_t t, uint8_t col)
-// Callback function for data that is being scrolled off the display
-{
-#if PRINT_CALLBACK
-  Serial.print("\n cb ");
-  Serial.print(dev);
-  Serial.print(' ');
-  Serial.print(t);
-  Serial.print(' ');
-  Serial.println(col);
-#endif
+void cross() {
+  mx.clear();
+  mx.control(MD_MAX72XX::UPDATE, MD_MAX72XX::OFF);
+
+  // diagonally down the display R to L
+  for (uint8_t i=0; i<ROW_SIZE; i++)
+  {
+    for (uint8_t j=0; j<MAX_DEVICES; j++)
+    {
+      mx.setColumn(j, i, 0xff);
+      mx.setRow(j, i, 0xff);
+    }
+    mx.update();
+    delay(DELAYTIME);
+    for (uint8_t j=0; j<MAX_DEVICES; j++)
+    {
+      mx.setColumn(j, i, 0x00);
+      mx.setRow(j, i, 0x00);
+    }
+  }
+
+  // moving up the display on the R
+  for (int8_t i=ROW_SIZE-1; i>=0; i--)
+  {
+    for (uint8_t j=0; j<MAX_DEVICES; j++)
+    {
+      mx.setColumn(j, i, 0xff);
+      mx.setRow(j, ROW_SIZE-1, 0xff);
+    }
+    mx.update();
+    delay(DELAYTIME);
+    for (uint8_t j=0; j<MAX_DEVICES; j++)
+    {
+      mx.setColumn(j, i, 0x00);
+      mx.setRow(j, ROW_SIZE-1, 0x00);
+    }
+  }
+
+  // diagonally up the display L to R
+  for (uint8_t i=0; i<ROW_SIZE; i++)
+  {
+    for (uint8_t j=0; j<MAX_DEVICES; j++)
+    {
+      mx.setColumn(j, i, 0xff);
+      mx.setRow(j, ROW_SIZE-1-i, 0xff);
+    }
+    mx.update();
+    delay(DELAYTIME);
+    for (uint8_t j=0; j<MAX_DEVICES; j++)
+    {
+      mx.setColumn(j, i, 0x00);
+      mx.setRow(j, ROW_SIZE-1-i, 0x00);
+    }
+  }
+  mx.control(MD_MAX72XX::UPDATE, MD_MAX72XX::ON);
 }
 
-uint8_t scrollDataSource(uint8_t dev, MD_MAX72XX::transformType_t t)
-// Callback function for data that is required for scrolling into the display
-{
-  static uint8_t* p = curMessage;
-  static enum { NEW_MESSAGE, LOAD_CHAR, SHOW_CHAR, BETWEEN_CHAR } state = LOAD_CHAR;
-  static uint8_t  curLen, showLen;
-  static uint8_t  cBuf[15];
-  uint8_t colData = 0;    // blank column is the default
+void stripe() {
+  const uint16_t maxCol = MAX_DEVICES*ROW_SIZE;
+  const uint8_t	stripeWidth = 10;
 
-#if IMMEDIATE_NEW
-  if (newMessageAvailable)  // there is a new message waiting
+  mx.clear();
+
+  for (uint16_t col=0; col<maxCol + ROW_SIZE + stripeWidth; col++)
   {
-    state = NEW_MESSAGE;
-    mx.clear(); // clear the display
+    for (uint8_t row=0; row < ROW_SIZE; row++)
+    {
+      mx.setPoint(row, col-row, true);
+      mx.setPoint(row, col-row - stripeWidth, false);
+    }
+    delay(DELAYTIME);
   }
-#endif
+}
 
-  // finite state machine to control what we do on the callback
-  switch(state)
+void checkboard() {
+  uint8_t chkCols[][2] = { { 0x55, 0xaa }, { 0x33, 0xcc }, { 0x0f, 0xf0 }, { 0xff, 0x00 } };
+
+  mx.clear();
+
+  for (uint8_t pattern = 0; pattern < sizeof(chkCols)/sizeof(chkCols[0]); pattern++)
   {
-    case NEW_MESSAGE:   // Load the new message
-      memcpy(curMessage, newMessage, BUF_SIZE);	// copy it in
-      newMessageAvailable = false;    // used it!
-      p = curMessage;
-      state = LOAD_CHAR;
-      break;
+    uint8_t col = 0;
+    uint8_t idx = 0;
+    uint8_t rep = 1 << pattern;
 
-    case LOAD_CHAR: // Load the next character from the font table
-      showLen = mx.getChar(*p++, sizeof(cBuf)/sizeof(cBuf[0]), cBuf);
-      curLen = 0;
-      state = SHOW_CHAR;
+    while (col < mx.getColumnCount())
+    {
+      for (uint8_t r = 0; r < rep; r++)
+        mx.setColumn(col++, chkCols[pattern][idx]);   // use odd/even column masks
+      idx++;
+      if (idx > 1) idx = 0;
+    }
 
-      // if we reached end of message, opportunity to load the next
-      if (*p == '\0')
+    delay(10 * DELAYTIME);
+  }
+}
+
+void bullseye() {
+  mx.clear();
+  mx.control(MD_MAX72XX::UPDATE, MD_MAX72XX::OFF);
+
+  for (uint8_t n=0; n<3; n++)
+  {
+    byte  b = 0xff;
+    int   i = 0;
+
+    while (b != 0x00)
+    {
+      for (uint8_t j=0; j<MAX_DEVICES+1; j++)
       {
-        p = curMessage;     // reset the pointer to start of message
-#if !IMMEDIATE_NEW
-        if (newMessageAvailable)  // there is a new message waiting
-        {
-          state = NEW_MESSAGE;    // we will load it here
-          break;
-        }
-#endif
+        mx.setRow(j, i, b);
+        mx.setColumn(j, i, b);
+        mx.setRow(j, ROW_SIZE-1-i, b);
+        mx.setColumn(j, COL_SIZE-1-i, b);
       }
-      // !! deliberately fall through to next state to start displaying
-
-    case SHOW_CHAR: // display the next part of the character
-      colData = cBuf[curLen++];
-      if (curLen == showLen)
+      mx.update();
+      delay(3*DELAYTIME);
+      for (uint8_t j=0; j<MAX_DEVICES+1; j++)
       {
-        showLen = CHAR_SPACING;
-        curLen = 0;
-        state = BETWEEN_CHAR;
+        mx.setRow(j, i, 0);
+        mx.setColumn(j, i, 0);
+        mx.setRow(j, ROW_SIZE-1-i, 0);
+        mx.setColumn(j, COL_SIZE-1-i, 0);
       }
-      break;
 
-    case BETWEEN_CHAR: // display inter-character spacing (blank columns)
-      colData = 0;
-      curLen++;
-      if (curLen == showLen)
-        state = LOAD_CHAR;
-      break;
+      bitClear(b, i);
+      bitClear(b, 7-i);
+      i++;
+    }
 
-    default:
-      state = LOAD_CHAR;
+    while (b != 0xff)
+    {
+      for (uint8_t j=0; j<MAX_DEVICES+1; j++)
+      {
+        mx.setRow(j, i, b);
+        mx.setColumn(j, i, b);
+        mx.setRow(j, ROW_SIZE-1-i, b);
+        mx.setColumn(j, COL_SIZE-1-i, b);
+      }
+      mx.update();
+      delay(3*DELAYTIME);
+      for (uint8_t j=0; j<MAX_DEVICES+1; j++)
+      {
+        mx.setRow(j, i, 0);
+        mx.setColumn(j, i, 0);
+        mx.setRow(j, ROW_SIZE-1-i, 0);
+        mx.setColumn(j, COL_SIZE-1-i, 0);
+      }
+
+      i--;
+      bitSet(b, i);
+      bitSet(b, 7-i);
+    }
   }
 
-  return(colData);
+  mx.control(MD_MAX72XX::UPDATE, MD_MAX72XX::ON);
 }
 
- void scrollText(void)
-{
-  static uint32_t	prevTime = 0;
+void spiral() {
+  int  rmin = 0, rmax = ROW_SIZE-1;
+  int  cmin = 0, cmax = (COL_SIZE*MAX_DEVICES)-1;
 
-  // Is it time to scroll the text?
-  if (millis()-prevTime >= scrollDelay)
+  mx.clear();
+  while ((rmax > rmin) && (cmax > cmin))
   {
-    mx.transform(MD_MAX72XX::TSL);  // scroll along - the callback will load all the data
-    prevTime = millis();      // starting point for next time
+    // do row
+    for (int i=cmin; i<=cmax; i++)
+    {
+      mx.setPoint(rmin, i, true);
+      delay(DELAYTIME/MAX_DEVICES);
+    }
+    rmin++;
+
+    // do column
+    for (uint8_t i=rmin; i<=rmax; i++)
+    {
+      mx.setPoint(i, cmax, true);
+      delay(DELAYTIME/MAX_DEVICES);
+    }
+    cmax--;
+
+    // do row
+    for (int i=cmax; i>=cmin; i--)
+    {
+      mx.setPoint(rmax, i, true);
+      delay(DELAYTIME/MAX_DEVICES);
+    }
+    rmax--;
+
+    // do column
+    for (uint8_t i=rmax; i>=rmin; i--)
+    {
+      mx.setPoint(i, cmin, true);
+      delay(DELAYTIME/MAX_DEVICES);
+    }
+    cmin++;
   }
 }
 
-uint16_t getScrollDelay(void)
-{
-#if USE_POT_CONTROL
-  uint16_t  t;
-
-  t = analogRead(SPEED_IN);
-  t = map(t, 0, 1023, 25, 250);
-
-  return(t);
-#else
-  return(SCROLL_DELAY);
-#endif
-}
-
-void setup()
-{
+void setup() {
+  Serial.begin(9600);
   mx.begin();
-  mx.setShiftDataInCallback(scrollDataSource);
-  mx.setShiftDataOutCallback(scrollDataSink);
-
-#if USE_POT_CONTROL
-  pinMode(SPEED_IN, INPUT);
-#else
-  scrollDelay = SCROLL_DELAY;
-#endif
-
-  newMessage[0] = '\0';
-
-  Serial.begin(57600);
-  Serial.print("\n[MD_MAX72XX Message Display]\nType a message for the scrolling display\nEnd message line with a newline");
+  while (!Serial) {
+    ;
+  }
 }
 
-void loop()
-{
-  scrollDelay = getScrollDelay();
-  readSerial();
-  scrollText();
+void loop() {
+  delay(1);
+  if (selector.equals("con-an-01")) {
+    if (djTextTrigger >= 3) {
+      scrollText(" Dj Davo Martinez ");
+      delay(500);
+      djTextTrigger = 0;
+    } else {
+      randNumber = random(1, 5);
+      if (randNumber == 1) {
+        cross();
+      } else if (randNumber == 2) {
+        stripe();
+      } else if (randNumber ==3) {
+        checkboard();
+      } else if (randNumber == 4) {
+        bullseye();
+      } else if (randNumber == 5) {
+        spiral();
+      }
+      djTextTrigger++;
+    }
+  } else if(selector.equals("custom-text")) {
+    if (!customText.equals("")) {
+      int str_len = str.length() + 1;
+      char char_array[str_len];
+      customText.toCharArray(char_array, str_len);
+      scrollText(char_array);
+      customText = "";
+      djTextTrigger = 0;
+    }
+    Serial.print("cust-ends");
+    selector = "";
+  }
 }
 
+void serialEvent() {
+  if (Serial.available()) {
+    str = Serial.readString();
+    str.trim();
+    if (str.equals("req-an-01")) {
+      Serial.print("req-an-01");
+    } else if (str.equals("con-an-01")) {
+      selector = "con-an-01";
+      delay(100);
+    } else {
+      selector = "custom-text";
+      customText = str;
+      delay(100);
+    }
+    Serial.flush();
+  }
+}
